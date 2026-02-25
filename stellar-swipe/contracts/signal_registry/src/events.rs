@@ -142,3 +142,13 @@ pub fn emit_combo_cancelled(env: &Env, combo_id: u64, provider: Address) {
     let topics = (Symbol::new(env, "combo_cancelled"), combo_id, provider);
     env.events().publish(topics, ());
 }
+
+pub fn emit_signal_updated(env: &Env, signal_id: u64, version: u32, updater: Address) {
+    let topics = (Symbol::new(env, "signal_updated"), signal_id, updater);
+    env.events().publish(topics, version);
+}
+
+pub fn emit_copy_recorded(env: &Env, user: Address, signal_id: u64, version: u32) {
+    let topics = (Symbol::new(env, "copy_recorded"), signal_id, user);
+    env.events().publish(topics, version);
+}

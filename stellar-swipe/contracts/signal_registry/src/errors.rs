@@ -130,3 +130,17 @@ pub enum ContestError {
     AlreadyFinalized = 804,
     NotQualified = 805,
 }
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum VersioningError {
+    NotSignalOwner = 900,
+    CannotUpdateInactive = 901,
+    MaxUpdatesReached = 902,
+    UpdateCooldown = 903,
+    SignalExpired = 904,
+    InvalidPrice = 905,
+    InvalidExpiry = 906,
+    VersionNotFound = 907,
+}
