@@ -6,7 +6,8 @@ use crate::distribution::{
 };
 use crate::{GovernanceContract, GovernanceContractClient, GovernanceError};
 use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::{Address, Env, String};
+use soroban_sdk::{Address, Env, Map, String};
+use stellar_swipe_common::Asset;
 
 const SUPPLY: i128 = 1_000_000_000;
 
@@ -46,6 +47,13 @@ fn initialize(
         &SUPPLY,
         recipients,
     );
+}
+
+fn asset(env: &Env, code: &str) -> Asset {
+    Asset {
+        code: String::from_str(env, code),
+        issuer: None,
+    }
 }
 
 #[test]
@@ -258,4 +266,149 @@ fn active_vote_lock_blocks_unstake() {
 
     let result = client.try_unstake(&recipients.community_rewards, &1_000);
     assert_eq!(result, Err(Ok(GovernanceError::ActiveVoteLock)));
+}
+
+#[test]
+fn treasury_spend_updates_budget_balances_and_history() {
+    let (env, contract_id, admin, recipients) = setup();
+    let client = client(&env, &contract_id);
+    initialize(&client, &env, &admin, &recipients);
+
+    let xlm = asset(&env, "XLM");
+    client.set_treasury_asset(&admin, &xlm, &1_000i128);
+    client.create_budget(
+        &admin,
+        &String::from_str(&env, "operations"),
+        &600i128,
+        &300i128,
+        &0u64,
+        &100u64,
+        &false,
+    );
+
+    let spend = client.execute_treasury_spend(
+        &admin,
+        &Address::generate(&env),
+        &250i128,
+        &xlm,
+        &String::from_str(&env, "operations"),
+        &String::from_str(&env, "hosting"),
+        &Some(114u64),
+    );
+
+    assert_eq!(spend.id, 1);
+    let treasury = client.treasury();
+    assert_eq!(treasury.assets.get(xlm).unwrap(), 750);
+    assert_eq!(treasury.spending_history.len(), 1);
+    let budget = treasury
+        .budgets
+        .get(String::from_str(&env, "operations"))
+        .unwrap();
+    assert_eq!(budget.spent, 250);
+    assert_eq!(budget.remaining, 350);
+}
+
+#[test]
+fn recurring_payments_reporting_and_rebalance_are_tracked() {
+    let (env, contract_id, admin, recipients) = setup();
+    let client = client(&env, &contract_id);
+    initialize(&client, &env, &admin, &recipients);
+
+    let xlm = asset(&env, "XLM");
+    let usdc = asset(&env, "USDC");
+    client.set_treasury_asset(&admin, &xlm, &100i128);
+    client.set_treasury_asset(&admin, &usdc, &100i128);
+    client.create_budget(
+        &admin,
+        &String::from_str(&env, "grants"),
+        &500i128,
+        &200i128,
+        &0u64,
+        &20u64,
+        &true,
+    );
+    client.create_recurring_payment(
+        &admin,
+        &Address::generate(&env),
+        &100i128,
+        &usdc,
+        &10u64,
+        &String::from_str(&env, "grants"),
+        &String::from_str(&env, "builder stipend"),
+        &None,
+        &Some(40u64),
+    );
+
+    env.ledger().set_timestamp(10);
+    assert_eq!(client.process_recurring_payments(&admin), 1);
+
+    client.set_rebalance_target(&admin, &xlm, &6_000i128);
+    client.set_rebalance_target(&admin, &usdc, &4_000i128);
+    let mut prices = Map::new(&env);
+    prices.set(xlm.clone(), 2);
+    prices.set(usdc.clone(), 1);
+    let actions = client.rebalance_treasury(&admin, &prices);
+
+    assert_eq!(actions.len(), 2);
+    let report = client.treasury_report();
+    assert_eq!(report.total_spends, 1);
+    assert_eq!(report.total_spent, 100);
+    assert_eq!(report.active_recurring_payments, 1);
+    assert_eq!(report.monthly_burn_rate, 100);
+    assert_eq!(report.runway_months, 2);
+    assert_eq!(report.total_value_usd, 200);
+    assert_eq!(report.last_rebalance, 10);
+}
+
+#[test]
+fn recurring_payment_is_paused_when_balance_is_insufficient() {
+    let (env, contract_id, admin, recipients) = setup();
+    let client = client(&env, &contract_id);
+    initialize(&client, &env, &admin, &recipients);
+
+    let usdc = asset(&env, "USDC");
+    client.set_treasury_asset(&admin, &usdc, &50i128);
+    client.create_budget(
+        &admin,
+        &String::from_str(&env, "operations"),
+        &500i128,
+        &500i128,
+        &0u64,
+        &20u64,
+        &true,
+    );
+    client.create_recurring_payment(
+        &admin,
+        &Address::generate(&env),
+        &100i128,
+        &usdc,
+        &10u64,
+        &String::from_str(&env, "operations"),
+        &String::from_str(&env, "salary"),
+        &None,
+        &Some(40u64),
+    );
+
+    env.ledger().set_timestamp(10);
+    assert_eq!(client.process_recurring_payments(&admin), 0);
+
+    let treasury = client.treasury();
+    assert_eq!(treasury.spending_history.len(), 0);
+    assert!(!treasury.recurring_payments.get(0).unwrap().active);
+}
+
+#[test]
+fn treasury_report_defaults_to_infinite_runway_without_recent_spend() {
+    let (env, contract_id, admin, recipients) = setup();
+    let client = client(&env, &contract_id);
+    initialize(&client, &env, &admin, &recipients);
+
+    let xlm = asset(&env, "XLM");
+    client.set_treasury_asset(&admin, &xlm, &250i128);
+
+    let report = client.treasury_report();
+    assert_eq!(report.total_spends, 0);
+    assert_eq!(report.total_spent, 0);
+    assert_eq!(report.monthly_burn_rate, 0);
+    assert_eq!(report.runway_months, 999);
 }

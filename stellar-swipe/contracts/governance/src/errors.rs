@@ -23,4 +23,9 @@ pub enum GovernanceError {
     ArithmeticOverflow = 17,
     InvalidRewardConfig = 18,
     InvalidMetadata = 19,
+    BudgetNotFound = 20,
+    BudgetExceeded = 21,
+    BudgetPeriodEnded = 22,
+    MissingAssetPrice = 23,
+    InvalidTreasuryConfig = 24,
 }
