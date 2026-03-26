@@ -73,7 +73,13 @@ feature/dca-strategy
     NotTWAPOwner = 40,
     TWAPNotActive = 41,
 
+Correlation-Based-Risk
+    // Correlation
+    CorrelationLimitExceeded = 42,
+    TooManyCorrelatedPositions = 43,
+
  main
  main
 main
+ main
 }
