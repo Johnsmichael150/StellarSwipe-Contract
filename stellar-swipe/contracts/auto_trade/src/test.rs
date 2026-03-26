@@ -1120,6 +1120,21 @@ fn test_authorization_at_exact_limit() {
     });
 }
 
+ feature/mean-reversion-strategy
+ feature/mean-reversion-strategy
+
+ feature/dca-strategy
+ main
+// ========================================
+// DCA Strategy Tests
+// ========================================
+
+#[cfg(test)]
+mod dca_tests {
+    use crate::strategies::dca::*;
+    use soroban_sdk::{
+        symbol_short,
+
 #[test]
 fn test_stat_arb_trade_creates_active_portfolio_state_correctly() {
     let env = setup_env();
@@ -1283,9 +1298,175 @@ mod insurance_tests {
     use crate::risk;
     use crate::storage;
     use soroban_sdk::{
+ main
         testutils::{Address as _, Ledger as _},
         Env,
     };
+ feature/dca-strategy
+    fn setup() -> (Env, soroban_sdk::Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1_000);
+        let user = soroban_sdk::Address::generate(&env);
+        (env, user)
+    }
+
+    fn set_price(env: &Env, asset: u32, price: i128) {
+        env.storage()
+            .temporary()
+            .set(&(symbol_short!("price"), asset), &price);
+    }
+
+    fn set_balance(env: &Env, user: &soroban_sdk::Address, bal: i128) {
+        env.storage()
+            .temporary()
+            .set(&(user.clone(), symbol_short!("balance")), &bal);
+    }
+
+ feature/mean-reversion-strategy
+ feature/mean-reversion-strategy
+    fn setup() -> (Env, soroban_sdk::Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1_000);
+        let user = soroban_sdk::Address::generate(&env);
+        (env, user)
+    }
+
+    fn set_price(env: &Env, asset: u32, price: i128) {
+        env.storage()
+            .temporary()
+            .set(&(symbol_short!("price"), asset), &price);
+    }
+
+    fn set_balance(env: &Env, user: &soroban_sdk::Address, bal: i128) {
+        env.storage()
+            .temporary()
+            .set(&(user.clone(), symbol_short!("balance")), &bal);
+    }
+
+
+ main
+    #[test]
+    fn test_create_dca_strategy() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            let id = create_dca_strategy(&env, user.clone(), 1, 10, DCAFrequency::Daily, Some(30))
+                .unwrap();
+            assert_eq!(id, 0);
+            let s = get_dca_strategy(&env, id).unwrap();
+            assert_eq!(s.purchase_amount, 10);
+            assert_eq!(s.status, DCAStatus::Active);
+            assert_eq!(s.end_time, 1_000 + 30 * 86_400);
+        });
+    }
+
+    #[test]
+    fn test_first_purchase_executes_immediately() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            set_price(&env, 1, 100);
+            set_balance(&env, &user, 1_000);
+            let id = create_dca_strategy(&env, user.clone(), 1, 10, DCAFrequency::Daily, None)
+                .unwrap();
+            assert!(is_purchase_due(&env, id).unwrap());
+            execute_dca_purchase(&env, id).unwrap();
+            let s = get_dca_strategy(&env, id).unwrap();
+            assert_eq!(s.purchases.len(), 1);
+            assert_eq!(s.total_invested, 10);
+        });
+    }
+
+    #[test]
+    fn test_second_purchase_after_one_day() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            set_price(&env, 1, 100);
+            set_balance(&env, &user, 1_000);
+            let id = create_dca_strategy(&env, user.clone(), 1, 10, DCAFrequency::Daily, None)
+                .unwrap();
+            execute_dca_purchase(&env, id).unwrap();
+
+            // Not due yet
+            assert!(!is_purchase_due(&env, id).unwrap());
+
+            // Advance 1 day
+            env.ledger().set_timestamp(1_000 + 86_400);
+            assert!(is_purchase_due(&env, id).unwrap());
+            execute_dca_purchase(&env, id).unwrap();
+
+            let s = get_dca_strategy(&env, id).unwrap();
+            assert_eq!(s.purchases.len(), 2);
+        });
+    }
+
+    #[test]
+    fn test_average_entry_price_calculation() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            set_balance(&env, &user, 10_000);
+            let id = create_dca_strategy(&env, user.clone(), 1, 100, DCAFrequency::Daily, None)
+                .unwrap();
+
+            // Purchase 1 at price 100
+            set_price(&env, 1, 100);
+            execute_dca_purchase(&env, id).unwrap();
+
+            // Purchase 2 at price 200
+            env.ledger().set_timestamp(1_000 + 86_400);
+            set_price(&env, 1, 200);
+            execute_dca_purchase(&env, id).unwrap();
+
+            let s = get_dca_strategy(&env, id).unwrap();
+            // total_invested = 200, total_acquired = 1_000_000 + 500_000 = 1_500_000 (PRECISION=1_000_000)
+            // avg = (200 * 1_000_000) / 1_500_000 = 133
+            assert!(s.average_entry_price > 0);
+            assert!(s.average_entry_price < 200);
+        });
+    }
+
+    #[test]
+    fn test_pause_stops_purchases() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            set_price(&env, 1, 100);
+            set_balance(&env, &user, 1_000);
+            let id = create_dca_strategy(&env, user.clone(), 1, 10, DCAFrequency::Daily, None)
+                .unwrap();
+            execute_dca_purchase(&env, id).unwrap();
+            pause_dca_strategy(&env, id).unwrap();
+
+            env.ledger().set_timestamp(1_000 + 86_400);
+            assert!(!is_purchase_due(&env, id).unwrap());
+        });
+    }
+
+    #[test]
+    fn test_resume_restarts_purchases() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            set_price(&env, 1, 100);
+            set_balance(&env, &user, 1_000);
+            let id = create_dca_strategy(&env, user.clone(), 1, 10, DCAFrequency::Daily, None)
+                .unwrap();
+            execute_dca_purchase(&env, id).unwrap();
+            pause_dca_strategy(&env, id).unwrap();
+
+            env.ledger().set_timestamp(1_000 + 86_400);
+            assert!(!is_purchase_due(&env, id).unwrap());
+
+            resume_dca_strategy(&env, id).unwrap();
+            assert!(is_purchase_due(&env, id).unwrap());
+            execute_dca_purchase(&env, id).unwrap();
+
+            let s = get_dca_strategy(&env, id).unwrap();
+            assert_eq!(s.purchases.len(), 2);
 
     fn setup_env() -> Env {
         let env = Env::default();
@@ -1363,10 +1544,30 @@ mod insurance_tests {
 
             let ins = AutoTradeContract::get_insurance_config(env.clone(), user.clone()).unwrap();
             assert!(ins.active_hedges.is_empty());
+ main
         });
     }
 
     #[test]
+ feature/mean-reversion-strategy
+ feature/mean-reversion-strategy
+ feature/dca-strategy
+ main
+    fn test_analyze_performance() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            set_price(&env, 1, 100);
+            set_balance(&env, &user, 1_000);
+            let id = create_dca_strategy(&env, user.clone(), 1, 100, DCAFrequency::Daily, None)
+                .unwrap();
+            execute_dca_purchase(&env, id).unwrap();
+
+            let perf = analyze_dca_performance(&env, id).unwrap();
+            assert_eq!(perf.total_invested, 100);
+            assert_eq!(perf.total_purchases, 1);
+            assert_eq!(perf.current_price, 100);
+
     fn test_insurance_configure_and_query() {
         let env = setup_env();
         let contract_id = env.register(AutoTradeContract, ());
@@ -1388,10 +1589,31 @@ mod insurance_tests {
             assert_eq!(ins.max_drawdown_bps, 2000);
             assert_eq!(ins.hedge_ratio_bps, 3000);
             assert_eq!(ins.rebalance_threshold_bps, 500);
+ main
         });
     }
 
     #[test]
+ feature/mean-reversion-strategy
+ feature/mean-reversion-strategy
+
+ feature/dca-strategy
+ main
+    fn test_end_time_stops_purchases() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            set_price(&env, 1, 100);
+            set_balance(&env, &user, 1_000);
+            // 1-day duration
+            let id = create_dca_strategy(&env, user.clone(), 1, 10, DCAFrequency::Daily, Some(1))
+                .unwrap();
+            execute_dca_purchase(&env, id).unwrap();
+
+            // Advance past end_time
+            env.ledger().set_timestamp(1_000 + 86_400 + 1);
+            assert!(!is_purchase_due(&env, id).unwrap());
+
     fn test_hedge_not_triggered_below_threshold() {
         let env = setup_env();
         let contract_id = env.register(AutoTradeContract, ());
@@ -1418,10 +1640,29 @@ mod insurance_tests {
             let ids =
                 AutoTradeContract::apply_hedge_if_needed(env.clone(), user.clone()).unwrap();
             assert_eq!(ids.len(), 0);
+ main
         });
     }
 
     #[test]
+ feature/mean-reversion-strategy
+ feature/mean-reversion-strategy
+
+ feature/dca-strategy
+ main
+    fn test_insufficient_balance_pauses_strategy() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            set_price(&env, 1, 100);
+            set_balance(&env, &user, 5); // less than purchase_amount=10
+            let id = create_dca_strategy(&env, user.clone(), 1, 10, DCAFrequency::Daily, None)
+                .unwrap();
+            let err = execute_dca_purchase(&env, id).unwrap_err();
+            assert_eq!(err, crate::errors::AutoTradeError::InsufficientBalance);
+            let s = get_dca_strategy(&env, id).unwrap();
+            assert_eq!(s.status, DCAStatus::Paused);
+
     fn test_disabled_insurance_no_hedge() {
         let env = setup_env();
         let contract_id = env.register(AutoTradeContract, ());
@@ -1446,10 +1687,31 @@ mod insurance_tests {
             let ids =
                 AutoTradeContract::apply_hedge_if_needed(env.clone(), user.clone()).unwrap();
             assert_eq!(ids.len(), 0);
+ feature/mean-reversion-strategy
+main
+
+ main
+ main
         });
     }
 
     #[test]
+ feature/mean-reversion-strategy
+ feature/mean-reversion-strategy
+
+ feature/dca-strategy
+ main
+    fn test_update_dca_schedule() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            let id = create_dca_strategy(&env, user.clone(), 1, 10, DCAFrequency::Daily, None)
+                .unwrap();
+            update_dca_schedule(&env, id, Some(50), Some(DCAFrequency::Weekly)).unwrap();
+            let s = get_dca_strategy(&env, id).unwrap();
+            assert_eq!(s.purchase_amount, 50);
+            assert_eq!(s.frequency, DCAFrequency::Weekly);
+
     fn test_rebalance_increases_hedge_on_portfolio_growth() {
         let env = setup_env();
         let contract_id = env.register(AutoTradeContract, ());
@@ -1477,10 +1739,32 @@ mod insurance_tests {
 
             let ids = AutoTradeContract::rebalance_hedges(env.clone(), user.clone()).unwrap();
             assert!(ids.len() > 0, "rebalance should add hedges when portfolio grows");
+ main
         });
     }
 
     #[test]
+ feature/mean-reversion-strategy
+ feature/mean-reversion-strategy
+
+ feature/dca-strategy
+ main
+    fn test_handle_missed_purchases() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            set_price(&env, 1, 100);
+            set_balance(&env, &user, 10_000);
+            let id = create_dca_strategy(&env, user.clone(), 1, 10, DCAFrequency::Daily, None)
+                .unwrap();
+
+            // Advance 3 days without executing
+            env.ledger().set_timestamp(1_000 + 3 * 86_400);
+            let missed = handle_missed_dca_purchases(&env, id).unwrap();
+            assert_eq!(missed, 3);
+            let s = get_dca_strategy(&env, id).unwrap();
+            assert_eq!(s.purchases.len(), 3);
+
     fn test_no_hedge_without_insurance_config() {
         let env = setup_env();
         let contract_id = env.register(AutoTradeContract, ());
@@ -1490,10 +1774,41 @@ mod insurance_tests {
             let err =
                 AutoTradeContract::apply_hedge_if_needed(env.clone(), user.clone()).unwrap_err();
             assert_eq!(err, AutoTradeError::InsuranceNotConfigured);
+ main
         });
     }
 
     #[test]
+ feature/mean-reversion-strategy
+ feature/mean-reversion-strategy
+
+ feature/dca-strategy
+ main
+    fn test_custom_frequency() {
+        let (env, user) = setup();
+        let contract = env.register(crate::AutoTradeContract, ());
+        env.as_contract(&contract, || {
+            set_price(&env, 1, 100);
+            set_balance(&env, &user, 1_000);
+            let id = create_dca_strategy(
+                &env,
+                user.clone(),
+                1,
+                10,
+                DCAFrequency::Custom { interval_seconds: 3_600 },
+                None,
+            )
+            .unwrap();
+            execute_dca_purchase(&env, id).unwrap();
+
+            // Not due after 30 min
+            env.ledger().set_timestamp(1_000 + 1_800);
+            assert!(!is_purchase_due(&env, id).unwrap());
+
+            // Due after 1 hour
+            env.ledger().set_timestamp(1_000 + 3_600);
+            assert!(is_purchase_due(&env, id).unwrap());
+=======
     fn test_invalid_config_rejected() {
         let env = setup_env();
         let contract_id = env.register(AutoTradeContract, ());
@@ -1523,6 +1838,7 @@ mod insurance_tests {
             )
             .unwrap_err();
             assert_eq!(err, AutoTradeError::InvalidInsuranceConfig);
+ main
         });
     }
 }

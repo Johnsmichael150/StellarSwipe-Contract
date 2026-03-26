@@ -1,7 +1,18 @@
 #![allow(dead_code)]
 use soroban_sdk::{contracttype, symbol_short, Address, Env};
+ feature/mean-reversion-strategy
+ feature/mean-reversion-strategy
+
 
 use crate::auth::{AuthConfig, AuthKey};
+ main
+
+ feature/dca-strategy
+
+
+use crate::auth::{AuthConfig, AuthKey};
+main
+ main
 
 #[contracttype]
 #[derive(Clone)]
@@ -16,6 +27,23 @@ pub struct Signal {
 pub enum DataKey {
     Trades(Address, u64),
     Signal(u64),
+}
+
+/// Authorize a user for testing (sets a large balance + auth config)
+pub fn authorize_user(env: &Env, user: &Address) {
+    use crate::auth::{AuthConfig, AuthKey};
+    let config = AuthConfig {
+        authorized: true,
+        max_trade_amount: i128::MAX,
+        expires_at: u64::MAX,
+        granted_at: env.ledger().timestamp(),
+    };
+    env.storage()
+        .persistent()
+        .set(&AuthKey::Authorization(user.clone()), &config);
+    env.storage()
+        .temporary()
+        .set(&(user.clone(), symbol_short!("balance")), &i128::MAX);
 }
 
 /// Get a signal by ID

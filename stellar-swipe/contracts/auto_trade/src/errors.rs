@@ -11,7 +11,21 @@ pub enum AutoTradeError {
     InsufficientLiquidity = 6,
     DailyTradeLimitExceeded = 7,
     PositionLimitExceeded = 8,
-    StopLossTriggered = 9,
+    StopLossTriggered = 9, feature/mean-reversion-strategy
+ feature/mean-reversion-strategy
+    DcaStrategyNotFound = 10,
+    DcaStrategyInactive = 11,
+    DcaEndTimeReached = 12,
+    MrStrategyNotFound = 13,
+    MrInsufficientHistory = 14,
+    MrLowVolatility = 15,
+
+feature/dca-strategy
+    DcaStrategyNotFound = 10,
+    DcaStrategyInactive = 11,
+    DcaEndTimeReached = 12,
+ main
+
     TradingPaused = 10,
 
     StrategyNotFound = 11,
@@ -35,6 +49,7 @@ pub enum AutoTradeError {
     PairNotCointegrated = 26,
     InvalidPairsConfig = 27,
  
+ main
     // Arbitrage
     ArbitrageOpportunityExpired = 28,
     ArbitrageUnprofitable = 29,
@@ -50,4 +65,7 @@ pub enum AutoTradeError {
     ReferralAlreadySet = 35,
     CircularReferral = 36,
     ReferralLimitExceeded = 37,
+
+ main
+ main
 }
