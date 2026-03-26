@@ -56,4 +56,8 @@ pub enum AutoTradeError {
     TWAPOrderNotFound = 39,
     NotTWAPOwner = 40,
     TWAPNotActive = 41,
+
+    // Correlation
+    CorrelationLimitExceeded = 42,
+    TooManyCorrelatedPositions = 43,
 }

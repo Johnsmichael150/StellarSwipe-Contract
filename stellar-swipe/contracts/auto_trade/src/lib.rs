@@ -5,6 +5,7 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Sy
 mod admin;
 mod advanced_risk;
 mod auth;
+mod correlation;
 mod errors;
 mod history;
 mod iceberg;
@@ -758,6 +759,262 @@ impl AutoTradeContract {
             lookback_days,
         )
     }
+
+    // ── Correlation-Based Risk Management (Issue #correlation) ───────────────
+
+    /// Calculate Pearson correlation between two assets (returns bps in [-10000, 10000]).
+    pub fn calculate_correlation(env: Env, asset_a: u32, asset_b: u32, window: u32) -> i128 {
+        correlation::calculate_correlation(&env, asset_a, asset_b, window)
+    }
+
+    /// Build and cache the correlation matrix for the given asset list.
+    pub fn build_correlation_matrix(
+        env: Env,
+        user: Address,
+        assets: Vec<u32>,
+    ) -> correlation::CorrelationMatrix {
+        correlation::get_or_build_matrix(&env, &user, &assets)
+    }
+
+    /// Assess correlation risk of adding `new_asset` / `new_amount` to the portfolio.
+    pub fn check_portfolio_correlation(
+        env: Env,
+        user: Address,
+        new_asset: u32,
+        new_amount: i128,
+    ) -> Result<correlation::CorrelationRisk, AutoTradeError> {
+        correlation::check_portfolio_correlation(&env, &user, new_asset, new_amount)
+    }
+
+    /// Enforce correlation limits; returns error if the trade would breach them.
+    pub fn enforce_correlation_limits(
+        env: Env,
+        user: Address,
+        new_asset: u32,
+        new_amount: i128,
+    ) -> Result<(), AutoTradeError> {
+        let result = correlation::enforce_correlation_limits(&env, &user, new_asset, new_amount);
+        if result.is_err() {
+            #[allow(deprecated)]
+            env.events().publish(
+                (
+                    Symbol::new(&env, "corr_limit_breach"),
+                    user.clone(),
+                    new_asset,
+                ),
+                new_amount,
+            );
+        }
+        result
+    }
+
+    /// Set per-user correlation limits.
+    pub fn set_correlation_limits(
+        env: Env,
+        user: Address,
+        limits: correlation::CorrelationLimits,
+    ) {
+        user.require_auth();
+        correlation::set_correlation_limits(&env, &user, &limits);
+    }
+
+    /// Get per-user correlation limits (defaults if not set).
+    pub fn get_correlation_limits(
+        env: Env,
+        user: Address,
+    ) -> correlation::CorrelationLimits {
+        correlation::get_correlation_limits(&env, &user)
+    }
+
+    /// Suggest up to 5 diversifying assets from `available` with low portfolio correlation.
+    pub fn suggest_diversification(
+        env: Env,
+        user: Address,
+        available: Vec<u32>,
+    ) -> Vec<u32> {
+        correlation::suggest_diversification(&env, &user, &available)
+    }
 }
 
 mod test;
+
+// ── Correlation-Based Risk Management integration tests ───────────────────────
+#[cfg(test)]
+mod correlation_tests {
+    use super::*;
+    use crate::correlation::{CorrelationLimits, RiskLevel};
+    use crate::risk;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, Vec,
+    };
+
+    fn setup() -> (Env, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1_000);
+        let contract_id = env.register(AutoTradeContract, ());
+        (env, contract_id)
+    }
+
+    fn seed_prices(env: &Env, asset_id: u32, prices: &[i128]) {
+        use crate::risk::RiskDataKey;
+        for (i, &p) in prices.iter().enumerate() {
+            env.storage().persistent().set(
+                &RiskDataKey::AssetPriceHistory(asset_id, i as u32),
+                &p,
+            );
+        }
+        env.storage().persistent().set(
+            &RiskDataKey::AssetPriceHistoryCount(asset_id),
+            &(prices.len() as u32),
+        );
+    }
+
+    /// Validation: XLM/USDC and XLM/BTC share the XLM leg → high correlation.
+    #[test]
+    fn test_xlm_usdc_xlm_btc_high_correlation() {
+        let (env, contract_id) = setup();
+        env.as_contract(&contract_id, || {
+            // Asset 1 = XLM/USDC, Asset 2 = XLM/BTC — same trend (XLM dominates).
+            let prices = [100i128, 103, 101, 106, 104, 109, 107, 112];
+            seed_prices(&env, 1, &prices);
+            seed_prices(&env, 2, &prices);
+
+            let corr =
+                AutoTradeContract::calculate_correlation(env.clone(), 1, 2, 30);
+            assert!(
+                corr > 7_000,
+                "XLM pairs should be highly correlated, got {corr}"
+            );
+        });
+    }
+
+    /// Validation: build matrix for 10 assets.
+    #[test]
+    fn test_build_matrix_10_assets() {
+        let (env, contract_id) = setup();
+        let user = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            let prices = [100i128, 102, 101, 105, 103, 107, 106, 110];
+            for id in 1u32..=10 {
+                seed_prices(&env, id, &prices);
+            }
+            let mut assets = Vec::new(&env);
+            for id in 1u32..=10 {
+                assets.push_back(id);
+            }
+            let matrix =
+                AutoTradeContract::build_correlation_matrix(env.clone(), user.clone(), assets);
+            // 10 assets → 10*9 = 90 directed pairs.
+            assert_eq!(matrix.correlations.len(), 90);
+        });
+    }
+
+    /// Validation: portfolio with high correlation is detected.
+    #[test]
+    fn test_high_correlation_portfolio_detected() {
+        let (env, contract_id) = setup();
+        let user = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            let prices = [100i128, 103, 101, 106, 104, 109, 107, 112];
+            seed_prices(&env, 1, &prices);
+            seed_prices(&env, 2, &prices);
+
+            risk::set_asset_price(&env, 1, 100);
+            risk::update_position(&env, &user, 1, 10_000, 100);
+
+            let risk_result = AutoTradeContract::check_portfolio_correlation(
+                env.clone(),
+                user.clone(),
+                2,
+                5_000,
+            )
+            .unwrap();
+
+            assert_eq!(risk_result.highly_correlated_assets, 1);
+            assert_ne!(risk_result.risk_level, RiskLevel::Low);
+        });
+    }
+
+    /// Validation: trade that exceeds correlation limits is blocked.
+    #[test]
+    fn test_trade_blocked_by_correlation_limit() {
+        let (env, contract_id) = setup();
+        let user = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            let prices = [100i128, 103, 101, 106, 104, 109, 107, 112];
+            seed_prices(&env, 1, &prices);
+            seed_prices(&env, 2, &prices);
+
+            risk::set_asset_price(&env, 1, 100);
+            risk::update_position(&env, &user, 1, 10_000, 100);
+
+            // Zero correlated positions allowed.
+            AutoTradeContract::set_correlation_limits(
+                env.clone(),
+                user.clone(),
+                CorrelationLimits {
+                    max_correlated_exposure_pct: 70,
+                    max_single_correlation: 7_000,
+                    max_correlated_positions: 0,
+                },
+            );
+
+            let result = AutoTradeContract::enforce_correlation_limits(
+                env.clone(),
+                user.clone(),
+                2,
+                5_000,
+            );
+            assert_eq!(result, Err(AutoTradeError::TooManyCorrelatedPositions));
+        });
+    }
+
+    /// Validation: uncorrelated trade passes limits.
+    #[test]
+    fn test_uncorrelated_trade_passes_limits() {
+        let (env, contract_id) = setup();
+        let user = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            risk::set_asset_price(&env, 1, 100);
+            risk::update_position(&env, &user, 1, 1_000, 100);
+            // Asset 99 has no price history → correlation defaults to 0.
+            let result = AutoTradeContract::enforce_correlation_limits(
+                env.clone(),
+                user.clone(),
+                99,
+                500,
+            );
+            assert!(result.is_ok());
+        });
+    }
+
+    /// Validation: diversification suggestions exclude held assets and return low-corr candidates.
+    #[test]
+    fn test_diversification_suggestions() {
+        let (env, contract_id) = setup();
+        let user = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            risk::set_asset_price(&env, 1, 100);
+            risk::update_position(&env, &user, 1, 1_000, 100);
+
+            let mut available = Vec::new(&env);
+            available.push_back(1u32); // already held — should be excluded
+            available.push_back(2u32); // no history → low corr → suggested
+            available.push_back(3u32); // no history → low corr → suggested
+
+            let suggestions = AutoTradeContract::suggest_diversification(
+                env.clone(),
+                user.clone(),
+                available,
+            );
+
+            // Asset 1 must not appear; assets 2 and 3 should.
+            for i in 0..suggestions.len() {
+                assert_ne!(suggestions.get(i).unwrap(), 1u32);
+            }
+            assert!(suggestions.len() >= 2);
+        });
+    }
+}
