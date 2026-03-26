@@ -16,4 +16,7 @@ pub enum AutoTradeError {
     DcaStrategyNotFound = 10,
     DcaStrategyInactive = 11,
     DcaEndTimeReached = 12,
+    MrStrategyNotFound = 13,
+    MrInsufficientHistory = 14,
+    MrLowVolatility = 15,
 }

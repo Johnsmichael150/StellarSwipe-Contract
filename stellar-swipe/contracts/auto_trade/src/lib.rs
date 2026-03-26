@@ -350,6 +350,81 @@ impl AutoTradeContract {
     ) -> Result<strategies::dca::DCAPerformance, AutoTradeError> {
         strategies::dca::analyze_dca_performance(&env, strategy_id)
     }
+
+    // ── Mean Reversion ────────────────────────────────────────────────────────
+
+    pub fn create_mean_reversion(
+        env: Env,
+        user: Address,
+        asset_pair: u32,
+        lookback_period_days: u32,
+        entry_z_score: i128,
+        exit_z_score: i128,
+        position_size_pct: u32,
+        max_positions: u32,
+    ) -> Result<u64, AutoTradeError> {
+        user.require_auth();
+        strategies::mean_reversion::create_mean_reversion_strategy(
+            &env, user, asset_pair, lookback_period_days,
+            entry_z_score, exit_z_score, position_size_pct, max_positions,
+        )
+    }
+
+    pub fn get_mean_reversion(
+        env: Env,
+        strategy_id: u64,
+    ) -> Result<strategies::mean_reversion::MeanReversionStrategy, AutoTradeError> {
+        strategies::mean_reversion::get_mean_reversion_strategy(&env, strategy_id)
+    }
+
+    pub fn check_mr_signals(
+        env: Env,
+        strategy_id: u64,
+    ) -> Result<Option<strategies::mean_reversion::ReversionSignal>, AutoTradeError> {
+        strategies::mean_reversion::check_mean_reversion_signals(&env, strategy_id)
+    }
+
+    pub fn execute_mr_trade(
+        env: Env,
+        user: Address,
+        strategy_id: u64,
+        signal: strategies::mean_reversion::ReversionSignal,
+    ) -> Result<u64, AutoTradeError> {
+        user.require_auth();
+        strategies::mean_reversion::execute_mean_reversion_trade(&env, strategy_id, signal)
+    }
+
+    pub fn check_mr_exits(
+        env: Env,
+        strategy_id: u64,
+    ) -> Result<soroban_sdk::Vec<u64>, AutoTradeError> {
+        strategies::mean_reversion::check_reversion_exits(&env, strategy_id)
+    }
+
+    pub fn adjust_mr_params(
+        env: Env,
+        strategy_id: u64,
+    ) -> Result<(), AutoTradeError> {
+        strategies::mean_reversion::adjust_strategy_parameters(&env, strategy_id)
+    }
+
+    pub fn disable_mean_reversion(
+        env: Env,
+        user: Address,
+        strategy_id: u64,
+    ) -> Result<(), AutoTradeError> {
+        user.require_auth();
+        strategies::mean_reversion::disable_mean_reversion_strategy(&env, strategy_id)
+    }
+
+    pub fn enable_mean_reversion(
+        env: Env,
+        user: Address,
+        strategy_id: u64,
+    ) -> Result<(), AutoTradeError> {
+        user.require_auth();
+        strategies::mean_reversion::enable_mean_reversion_strategy(&env, strategy_id)
+    }
 }
 
 mod test;
