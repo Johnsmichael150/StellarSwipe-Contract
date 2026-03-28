@@ -13,6 +13,7 @@ mod iceberg;
 mod multi_asset;
 mod portfolio;
 mod portfolio_insurance;
+mod positions;
 mod referral;
 mod risk;
 mod risk_parity;
@@ -292,6 +293,65 @@ impl AutoTradeContract {
         }
 
         Ok(TradeResult { trade })
+    }
+
+    // ── Position Management (Issues #191, #192, #193) ────────────────────────
+
+    /// Open a new tracked position. Returns a unique trade_id (BytesN<32>).
+    /// Issue #191
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_position(
+        env: Env,
+        user: Address,
+        signal_id: u64,
+        asset_pair: u32,
+        amount: i128,
+        entry_price: i128,
+        stop_loss: i128,
+        take_profit: i128,
+    ) -> soroban_sdk::BytesN<32> {
+        user.require_auth();
+        if amount <= 0 || entry_price <= 0 {
+            panic!("invalid amount or price");
+        }
+        positions::open_position(&env, &user, signal_id, asset_pair, amount, entry_price, stop_loss, take_profit)
+    }
+
+    /// Close an existing position and calculate P&L. Returns PositionResult.
+    /// Issue #192
+    pub fn close_position(
+        env: Env,
+        user: Address,
+        trade_id: soroban_sdk::BytesN<32>,
+        exit_price: i128,
+    ) -> Option<positions::PositionResult> {
+        user.require_auth();
+        positions::close_position(&env, &user, &trade_id, exit_price)
+    }
+
+    /// Get all positions (open + closed) for a user — the full portfolio view.
+    /// Issue #193
+    pub fn get_all_positions(
+        env: Env,
+        user: Address,
+    ) -> soroban_sdk::Vec<positions::PositionData> {
+        positions::get_all_positions(&env, &user)
+    }
+
+    /// Get only open positions for a user.
+    pub fn get_open_positions(
+        env: Env,
+        user: Address,
+    ) -> soroban_sdk::Vec<positions::PositionData> {
+        positions::get_open_positions(&env, &user)
+    }
+
+    /// Get only closed positions for a user.
+    pub fn get_closed_positions(
+        env: Env,
+        user: Address,
+    ) -> soroban_sdk::Vec<positions::PositionData> {
+        positions::get_closed_positions(&env, &user)
     }
 
     /// Fetch executed trade by user + signal

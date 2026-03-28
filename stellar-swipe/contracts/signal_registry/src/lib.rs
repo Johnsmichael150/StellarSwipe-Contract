@@ -139,6 +139,23 @@ impl SignalRegistry {
         admin::unpause_trading(&env, &caller)
     }
 
+    // ── Fee Collection Pause (Issue #189) ────────────────────────────────────
+
+    /// Pause fee collection while allowing reads and position closures.
+    pub fn pause_fee_collection(env: Env, caller: Address) -> Result<(), AdminError> {
+        admin::pause_fee_collection(&env, &caller)
+    }
+
+    /// Resume fee collection.
+    pub fn resume_fee_collection(env: Env, caller: Address) -> Result<(), AdminError> {
+        admin::resume_fee_collection(&env, &caller)
+    }
+
+    /// Check if fee collection is currently paused.
+    pub fn is_fee_collection_paused(env: Env) -> bool {
+        admin::is_fee_collection_paused(&env)
+    }
+
     pub fn pause_category(
         env: Env,
         caller: Address,

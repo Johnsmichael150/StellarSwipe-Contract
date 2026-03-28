@@ -28,6 +28,7 @@ pub enum AdminStorageKey {
     MultiSigEnabled,
     MultiSigSigners,
     MultiSigThreshold,
+    FeeCollectionPaused,
 }
 
 #[contracttype]
@@ -583,6 +584,52 @@ pub fn remove_multisig_signer(
 
     emit_multisig_signer_removed(env, signer_to_remove, caller.clone());
     Ok(())
+}
+
+// ==================== Fee Collection Pause (Issue #189) ====================
+
+/// Pause fee collection. Read operations and position closures continue.
+pub fn pause_fee_collection(env: &Env, caller: &Address) -> Result<(), AdminError> {
+    require_admin(env, caller)?;
+    caller.require_auth();
+
+    env.storage()
+        .instance()
+        .set(&AdminStorageKey::FeeCollectionPaused, &true);
+
+    emit_parameter_updated(
+        env,
+        soroban_sdk::Symbol::new(env, "fee_paused"),
+        0,
+        1,
+    );
+    Ok(())
+}
+
+/// Resume fee collection.
+pub fn resume_fee_collection(env: &Env, caller: &Address) -> Result<(), AdminError> {
+    require_admin(env, caller)?;
+    caller.require_auth();
+
+    env.storage()
+        .instance()
+        .set(&AdminStorageKey::FeeCollectionPaused, &false);
+
+    emit_parameter_updated(
+        env,
+        soroban_sdk::Symbol::new(env, "fee_paused"),
+        1,
+        0,
+    );
+    Ok(())
+}
+
+/// Check if fee collection is paused.
+pub fn is_fee_collection_paused(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&AdminStorageKey::FeeCollectionPaused)
+        .unwrap_or(false)
 }
 
 /// Set circuit breaker configuration
