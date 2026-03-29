@@ -1,3 +1,6 @@
+use soroban_sdk::contracterror;
+
+#[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum AutoTradeError {
     InvalidAmount = 1,
@@ -73,15 +76,32 @@ feature/dca-strategy
     TradingPaused = 10,
     StrategyNotFound = 11,
     PositionAlreadyExists = 12,
+ feat/smart-order-routing-84
+    InsufficientPriceHistory = 13,
+    RankingDisabled = 14,
+    InvalidBasketSize = 15,
+
     RankingDisabled = 13,
     InvalidBasketSize = 14,
     InsufficientPriceHistory = 15,
+ main
     InvalidPriceData = 16,
     NonCointegratedBasket = 17,
     ActivePortfolioExists = 18,
     NoActivePortfolio = 19,
     NoTradeSignal = 20,
     InvalidStatArbConfig = 21,
+ feat/smart-order-routing-84
+    InvalidInsuranceConfig = 22,
+    InsuranceNotConfigured = 23,
+    SelfReferral = 24,
+    ReferralAlreadySet = 25,
+    CircularReferral = 26,
+    ReferralLimitExceeded = 27,
+    SlippageExceeded = 28,
+    RoutingPlanNotFound = 29,
+    AtomicExecutionFailed = 30,
+
     PairsStrategyNotFound = 22,
     PairsActivePositionExists = 23,
     PairsNoActivePosition = 24,
@@ -118,6 +138,7 @@ feature/dca-strategy
  main
  main
 main
+ main
  main
  main
 }

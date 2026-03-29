@@ -52,11 +52,3 @@ pub fn revoke_user_authorization(env: &Env, user: &Address) {
         .persistent()
         .remove(&AuthKey::Authorization(user.clone()));
 }
-
-pub fn get_signal(env: &Env, id: u64) -> Option<Signal> {
-    env.storage().persistent().get(&DataKey::Signal(id))
-}
-
-pub fn set_signal(env: &Env, id: u64, signal: &Signal) {
-    env.storage().persistent().set(&DataKey::Signal(id), signal);
-}
