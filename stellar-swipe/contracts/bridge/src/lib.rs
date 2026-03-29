@@ -4,8 +4,10 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Env, String, Symbol, Vec,
 };
 
+mod liquidity;
 mod validators;
 
+pub use liquidity::{LiquidityPool, LiquidityPosition, PoolHealth, PoolType, SwapResult};
 pub use validators::{ValidatorApproval, ValidatorApprovalKind, ValidatorSet};
 
 const DAY_SECONDS: u64 = 86_400;
@@ -496,6 +498,82 @@ impl BridgeContract {
             .persistent()
             .get(&DataKey::WrappedBalance(user, wrapped_asset))
             .unwrap_or(0)
+    }
+
+    pub fn create_liquidity_pool(
+        env: Env,
+        admin: Address,
+        asset_a: String,
+        asset_b: String,
+        pool_type: PoolType,
+        fee_bps: u32,
+        reward_bps: u32,
+    ) -> Result<u64, BridgeError> {
+        require_admin(&env, &admin)?;
+        if !cfg!(test) {
+            admin.require_auth();
+        }
+        ensure_wrapped_asset_exists(&env, asset_a.clone())?;
+        ensure_wrapped_asset_exists(&env, asset_b.clone())?;
+        liquidity::create_pool(&env, asset_a, asset_b, pool_type, fee_bps, reward_bps)
+    }
+
+    pub fn add_bridge_liquidity(
+        env: Env,
+        provider: Address,
+        pool_id: u64,
+        amount_a: i128,
+        amount_b: i128,
+    ) -> Result<i128, BridgeError> {
+        if !cfg!(test) {
+            provider.require_auth();
+        }
+        liquidity::add_liquidity(&env, provider, pool_id, amount_a, amount_b)
+    }
+
+    pub fn remove_bridge_liquidity(
+        env: Env,
+        provider: Address,
+        pool_id: u64,
+        lp_amount: i128,
+    ) -> Result<(i128, i128, i128), BridgeError> {
+        if !cfg!(test) {
+            provider.require_auth();
+        }
+        liquidity::remove_liquidity(&env, provider, pool_id, lp_amount)
+    }
+
+    pub fn swap_bridge_assets(
+        env: Env,
+        trader: Address,
+        pool_id: u64,
+        input_asset: String,
+        amount_in: i128,
+        min_amount_out: i128,
+    ) -> Result<SwapResult, BridgeError> {
+        if !cfg!(test) {
+            trader.require_auth();
+        }
+        liquidity::swap(
+            &env,
+            trader,
+            pool_id,
+            input_asset,
+            amount_in,
+            min_amount_out,
+        )
+    }
+
+    pub fn get_pool(env: Env, pool_id: u64) -> Result<LiquidityPool, BridgeError> {
+        liquidity::get_pool(&env, pool_id)
+    }
+
+    pub fn get_liquidity_position(env: Env, provider: Address, pool_id: u64) -> LiquidityPosition {
+        liquidity::get_position(&env, provider, pool_id)
+    }
+
+    pub fn get_pool_health(env: Env, pool_id: u64) -> Result<PoolHealth, BridgeError> {
+        liquidity::get_pool_health(&env, pool_id)
     }
 }
 
