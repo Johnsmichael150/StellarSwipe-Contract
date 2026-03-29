@@ -56,8 +56,19 @@ pub struct SentimentStrategy {
     pub tech_confirmation_required: bool,
     pub position_size_pct: u32,
     pub sentiment_decay_hours: u32,
-    pub active_position: Option<SentimentPosition>,
+    /// `position_id == 0` means no active position.
+    pub active_position: SentimentPosition,
     pub created_at: u64,
+}
+
+fn sentiment_position_absent() -> SentimentPosition {
+    SentimentPosition {
+        position_id: 0,
+        entry_sentiment: 0,
+        entry_price: 0,
+        amount: 0,
+        entry_time: 0,
+    }
 }
 
 /// Sentiment score aggregation
@@ -165,7 +176,7 @@ pub fn create_sentiment_strategy(
         tech_confirmation_required,
         position_size_pct,
         sentiment_decay_hours,
-        active_position: None,
+        active_position: sentiment_position_absent(),
         created_at: env.ledger().timestamp(),
     };
     
@@ -205,23 +216,23 @@ pub fn aggregate_sentiment(env: &Env, strategy_id: u64) -> Result<SentimentScore
     // Collect sentiment from each source
     for source in strategy.sentiment_sources.iter() {
         let (score, weight) = match source {
-            SentimentSource::Twitter(handle) => {
-                collect_twitter_sentiment(env, &handle)?
+            SentimentSource::Twitter(ref handle) => {
+                collect_twitter_sentiment(env, handle)?
             }
-            SentimentSource::Reddit(subreddit) => {
-                collect_reddit_sentiment(env, &subreddit)?
+            SentimentSource::Reddit(ref subreddit) => {
+                collect_reddit_sentiment(env, subreddit)?
             }
             SentimentSource::OnChainMetrics(metric_type) => {
                 collect_onchain_sentiment(env, &strategy.asset_pair, metric_type)?
             }
-            SentimentSource::NewsFeeds(feed_url) => {
-                collect_news_sentiment(env, &feed_url)?
+            SentimentSource::NewsFeeds(ref feed_url) => {
+                collect_news_sentiment(env, feed_url)?
             }
             SentimentSource::SignalRationale => {
                 collect_signal_sentiment(env, &strategy.asset_pair)?
             }
         };
-        
+
         let source_name = format_source_name(env, &source);
         source_scores.set(source_name, score);
         weighted_sum += score * weight as i32;
@@ -424,7 +435,19 @@ fn collect_signal_sentiment(env: &Env, _asset_pair: &AssetPair) -> Result<(i32, 
 
 /// Analyze sentiment from text rationale
 fn analyze_rationale_sentiment(env: &Env, rationale: &String) -> Result<i32, String> {
-    let text = rationale.to_string().to_lowercase();
+    let n = rationale.len() as usize;
+    if n > 256 {
+        return Ok(0);
+    }
+    let mut buf = [0u8; 256];
+    rationale.copy_into_slice(&mut buf[..n]);
+    for b in &mut buf[..n] {
+        if *b >= b'A' && *b <= b'Z' {
+            *b += 32;
+        }
+    }
+    let text = core::str::from_utf8(&buf[..n])
+        .map_err(|_| String::from_str(env, "invalid utf8"))?;
     
     // Bullish keywords
     let bullish_keywords = ["bullish", "buy", "breakout", "moon", "pump", "strong", 
@@ -490,7 +513,7 @@ pub fn check_sentiment_signal(
     let strategy = get_strategy(env, strategy_id)?;
     
     // Don't open new position if one exists
-    if strategy.active_position.is_some() {
+    if strategy.active_position.position_id != 0 {
         return Ok(None);
     }
     
@@ -586,7 +609,7 @@ pub fn execute_sentiment_trade(
         entry_time: env.ledger().timestamp(),
     };
     
-    strategy.active_position = Some(position);
+    strategy.active_position = position;
     store_strategy(env, strategy_id, &strategy);
     
     env.events().publish(
@@ -608,10 +631,10 @@ pub fn check_sentiment_exit(
 ) -> Result<Option<u64>, String> {
     let mut strategy = get_strategy(env, strategy_id)?;
     
-    let position = match &strategy.active_position {
-        Some(pos) => pos.clone(),
-        None => return Ok(None),
-    };
+    if strategy.active_position.position_id == 0 {
+        return Ok(None);
+    }
+    let position = strategy.active_position.clone();
     
     // Get current sentiment
     let mut current_sentiment = aggregate_sentiment(env, strategy_id)?;
@@ -650,7 +673,7 @@ pub fn check_sentiment_exit(
         );
         
         let position_id = position.position_id;
-        strategy.active_position = None;
+        strategy.active_position = sentiment_position_absent();
         store_strategy(env, strategy_id, &strategy);
         
         return Ok(Some(position_id));
@@ -1034,9 +1057,9 @@ mod tests {
         assert_eq!(position_id, 1);
         
         let strategy = get_strategy(&env, strategy_id).unwrap();
-        assert!(strategy.active_position.is_some());
-        
-        let position = strategy.active_position.unwrap();
+        assert_ne!(strategy.active_position.position_id, 0);
+
+        let position = strategy.active_position;
         assert_eq!(position.entry_sentiment, 7000);
     }
 

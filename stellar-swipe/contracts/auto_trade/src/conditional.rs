@@ -22,27 +22,14 @@ pub enum PriceDirection {
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Condition {
-    /// Price of `asset_id` is `direction` `threshold` (scaled ×10^7).
-    Price {
-        asset_id: u32,
-        direction: PriceDirection,
-        threshold: i128,
-    },
-    /// Current ledger timestamp ≥ `after_ts`.
-    TimeAfter { after_ts: u64 },
-    /// Price dropped by `drop_bps` basis-points from a recorded peak, then
-    /// rebounded by `rebound_bps` basis-points from the trough.
-    PriceDropRebound {
-        asset_id: u32,
-        drop_bps: u32,
-        rebound_bps: u32,
-    },
-    /// Price has moved more than `threshold_bps` bps from the reference price
-    /// stored at order creation (volatility breakout).
-    VolatilityBreakout {
-        asset_id: u32,
-        threshold_bps: u32,
-    },
+    /// Price of `.0` is `.1` `.2` (scaled ×10^7).
+    Price(u32, PriceDirection, i128),
+    /// Current ledger timestamp ≥ inner value.
+    TimeAfter(u64),
+    /// Price dropped by `.1` bps from peak, rebounded by `.2` bps from trough (asset `.0`).
+    PriceDropRebound(u32, u32, u32),
+    /// Volatility breakout: asset `.0`, threshold `.1` bps from reference.
+    VolatilityBreakout(u32, u32),
 }
 
 /// How multiple conditions are combined.
@@ -162,15 +149,15 @@ fn current_price(env: &Env, asset_id: u32) -> i128 {
 
 fn eval_condition(env: &Env, cond: &Condition, order: &ConditionalOrder) -> bool {
     match cond {
-        Condition::Price { asset_id, direction, threshold } => {
+        Condition::Price(asset_id, direction, threshold) => {
             let price = current_price(env, *asset_id);
             match direction {
                 PriceDirection::Above => price >= *threshold,
                 PriceDirection::Below => price <= *threshold,
             }
         }
-        Condition::TimeAfter { after_ts } => env.ledger().timestamp() >= *after_ts,
-        Condition::PriceDropRebound { asset_id, drop_bps, rebound_bps } => {
+        Condition::TimeAfter(after_ts) => env.ledger().timestamp() >= *after_ts,
+        Condition::PriceDropRebound(asset_id, drop_bps, rebound_bps) => {
             let price = current_price(env, *asset_id);
             let ref_price = order.reference_price;
             if ref_price == 0 { return false; }
@@ -182,7 +169,7 @@ fn eval_condition(env: &Env, cond: &Condition, order: &ConditionalOrder) -> bool
             let rebound_threshold = trough * (10_000 + *rebound_bps as i128) / 10_000;
             price >= rebound_threshold
         }
-        Condition::VolatilityBreakout { asset_id, threshold_bps } => {
+        Condition::VolatilityBreakout(asset_id, threshold_bps) => {
             let price = current_price(env, *asset_id);
             let ref_price = order.reference_price;
             if ref_price == 0 { return false; }
@@ -400,7 +387,7 @@ mod tests {
 
     fn simple_price_condition(env: &Env, asset_id: u32, direction: PriceDirection, threshold: i128) -> Vec<Condition> {
         let mut v = Vec::new(env);
-        v.push_back(Condition::Price { asset_id, direction, threshold });
+        v.push_back(Condition::Price(asset_id, direction, threshold));
         v
     }
 
@@ -479,7 +466,7 @@ mod tests {
         let (env, user) = setup();
         set_price(&env, 1, 100_000);
         let mut conditions = Vec::new(&env);
-        conditions.push_back(Condition::TimeAfter { after_ts: 2_000 });
+        conditions.push_back(Condition::TimeAfter(2_000));
         let id = create_conditional_order(&env, user.clone(), 1, ConditionalSide::Buy, 1_000, 0, conditions, LogicOp::And, 10_000).unwrap();
 
         // Time not yet reached
@@ -501,7 +488,7 @@ mod tests {
         set_price(&env, 1, 100_000);
         let mut conditions = Vec::new(&env);
         // Drop 10% then rebound 3%
-        conditions.push_back(Condition::PriceDropRebound { asset_id: 1, drop_bps: 1_000, rebound_bps: 300 });
+        conditions.push_back(Condition::PriceDropRebound(1, 1_000, 300));
         let id = create_conditional_order(&env, user.clone(), 1, ConditionalSide::Buy, 1_000, 0, conditions, LogicOp::And, 10_000).unwrap();
 
         // Price drops to 89_000 (< 90_000 threshold) — trough updated, no rebound yet
@@ -524,7 +511,7 @@ mod tests {
         set_price(&env, 1, 100_000);
         let mut conditions = Vec::new(&env);
         // 5% breakout = 500 bps
-        conditions.push_back(Condition::VolatilityBreakout { asset_id: 1, threshold_bps: 500 });
+        conditions.push_back(Condition::VolatilityBreakout(1, 500));
         let id = create_conditional_order(&env, user.clone(), 1, ConditionalSide::Buy, 1_000, 0, conditions, LogicOp::And, 10_000).unwrap();
 
         set_price(&env, 1, 104_000); // only 4% — not enough
@@ -545,8 +532,8 @@ mod tests {
         set_price(&env, 1, 100_000);
         set_price(&env, 2, 50_000);
         let mut conditions = Vec::new(&env);
-        conditions.push_back(Condition::Price { asset_id: 1, direction: PriceDirection::Above, threshold: 110_000 });
-        conditions.push_back(Condition::Price { asset_id: 2, direction: PriceDirection::Below, threshold: 40_000 });
+        conditions.push_back(Condition::Price(1, PriceDirection::Above, 110_000));
+        conditions.push_back(Condition::Price(2, PriceDirection::Below, 40_000));
         let id = create_conditional_order(&env, user.clone(), 1, ConditionalSide::Buy, 1_000, 0, conditions, LogicOp::And, 10_000).unwrap();
 
         // Only first condition met
@@ -567,8 +554,8 @@ mod tests {
         set_price(&env, 1, 100_000);
         set_price(&env, 2, 50_000);
         let mut conditions = Vec::new(&env);
-        conditions.push_back(Condition::Price { asset_id: 1, direction: PriceDirection::Above, threshold: 110_000 });
-        conditions.push_back(Condition::Price { asset_id: 2, direction: PriceDirection::Below, threshold: 40_000 });
+        conditions.push_back(Condition::Price(1, PriceDirection::Above, 110_000));
+        conditions.push_back(Condition::Price(2, PriceDirection::Below, 40_000));
         let id = create_conditional_order(&env, user.clone(), 1, ConditionalSide::Buy, 1_000, 0, conditions, LogicOp::Or, 10_000).unwrap();
 
         // Only first condition met — OR should trigger

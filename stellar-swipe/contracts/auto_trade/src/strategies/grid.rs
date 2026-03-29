@@ -286,6 +286,10 @@ pub fn on_grid_order_filled(
         .active_orders
         .get(level)
         .ok_or(AutoTradeError::SignalNotFound)?;
+feat/smart-order-routing-84
+
+    let filled_for_profit = filled_order.clone();
+ main
     strategy.active_orders.remove(level);
 
     strategy.filled_orders.push_back(FilledGridOrder {
@@ -296,16 +300,26 @@ pub fn on_grid_order_filled(
         filled_at: env.ledger().timestamp(),
     });
 
+ feat/smart-order-routing-84
     if let Some(profit) = calculate_grid_profit(&strategy, &filled_order, fill_price, fill_amount) {
+
+    if let Some(profit) =
+        calculate_grid_profit(&strategy, &filled_for_profit, fill_price, fill_amount)
+    {
+ main
         strategy.total_profit += profit;
 
         #[allow(deprecated)]
         env.events().publish(
+ feat/smart-order-routing-84
             (
                 Symbol::new(env, "grid_profit"),
                 strategy_id,
                 filled_order.level,
             ),
+
+            (Symbol::new(env, "grid_profit"), strategy_id, filled_for_profit.level),
+main
             profit,
         );
     }

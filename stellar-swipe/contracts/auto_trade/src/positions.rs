@@ -76,9 +76,9 @@ fn generate_trade_id(env: &Env, user: &Address, signal_id: u64) -> BytesN<32> {
     let nonce = get_nonce(env);
     set_nonce(env, nonce + 1);
 
-    // Build a unique preimage: user bytes + signal_id + nonce + timestamp
+    // Build a unique preimage: user strkey bytes + signal_id + nonce + timestamp
     let mut preimage = soroban_sdk::Bytes::new(env);
-    let user_bytes: soroban_sdk::Bytes = soroban_sdk::Bytes::from_val(env, &user.to_val());
+    let user_bytes = user.to_string().to_bytes();
     preimage.append(&user_bytes);
     preimage.append(&soroban_sdk::Bytes::from_array(
         env,
@@ -90,7 +90,7 @@ fn generate_trade_id(env: &Env, user: &Address, signal_id: u64) -> BytesN<32> {
         &env.ledger().timestamp().to_be_bytes(),
     ));
 
-    env.crypto().sha256(&preimage)
+    env.crypto().sha256(&preimage).into()
 }
 
 fn save_position(env: &Env, position: &PositionData) {

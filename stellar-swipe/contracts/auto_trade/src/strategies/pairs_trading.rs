@@ -38,10 +38,25 @@ pub struct PairsTradingStrategy {
     pub entry_z_score: i128,
     pub exit_z_score: i128,
     pub position_size_pct: u32, // out of 10000
-    pub active_position: Option<PairsPosition>,
+    /// `position_id == 0` means no active position.
+    pub active_position: PairsPosition,
     pub historical_ratio_mean: i128,
     pub historical_ratio_std_dev: i128,
     pub correlation_coefficient: i128,
+}
+
+fn pairs_position_absent() -> PairsPosition {
+    PairsPosition {
+        position_id: 0,
+        entry_ratio: 0,
+        entry_z_score: 0,
+        entry_time: 0,
+        long_asset: 0,
+        short_asset: 0,
+        long_amount: 0,
+        short_amount: 0,
+        status: PositionStatus::Closed,
+    }
 }
 
 #[contracttype]
@@ -109,7 +124,7 @@ pub fn configure_pairs_strategy(
         entry_z_score,
         exit_z_score,
         position_size_pct,
-        active_position: None,
+        active_position: pairs_position_absent(),
         historical_ratio_mean: 0,
         historical_ratio_std_dev: 0,
         correlation_coefficient: 0,
@@ -285,7 +300,7 @@ pub fn check_pairs_trading_signal(
 ) -> Result<Option<PairsSignal>, AutoTradeError> {
     let mut strategy = get_pairs_trading_strategy(env, user, strategy_id)?;
 
-    if strategy.active_position.is_some() {
+    if strategy.active_position.position_id != 0 {
         return Ok(None);
     }
 
@@ -425,7 +440,7 @@ pub fn execute_pairs_trade(
 ) -> Result<u64, AutoTradeError> {
     let mut strategy = get_pairs_trading_strategy(env, user, strategy_id)?;
 
-    if strategy.active_position.is_some() {
+    if strategy.active_position.position_id != 0 {
         return Err(AutoTradeError::PairsActivePositionExists);
     }
 
@@ -448,7 +463,7 @@ pub fn execute_pairs_trade(
         status: PositionStatus::Open,
     };
 
-    strategy.active_position = Some(position);
+    strategy.active_position = position;
     save_strategy(env, user, strategy_id, &strategy);
 
     env.events().publish(
@@ -466,10 +481,10 @@ pub fn check_pairs_exit(
 ) -> Result<Option<u64>, AutoTradeError> {
     let mut strategy = get_pairs_trading_strategy(env, user, strategy_id)?;
 
-    let position = match &strategy.active_position {
-        Some(pos) => pos.clone(),
-        None => return Err(AutoTradeError::PairsNoActivePosition),
-    };
+    if strategy.active_position.position_id == 0 {
+        return Err(AutoTradeError::PairsNoActivePosition);
+    }
+    let position = strategy.active_position.clone();
 
     let analysis = analyze_asset_pair(
         env,
@@ -490,7 +505,7 @@ pub fn check_pairs_exit(
             (position.position_id, analysis.current_ratio, total_pnl, current_time(env) - position.entry_time),
         );
         
-        strategy.active_position = None;
+        strategy.active_position = pairs_position_absent();
         save_strategy(env, user, strategy_id, &strategy);
         
         return Ok(Some(position.position_id));

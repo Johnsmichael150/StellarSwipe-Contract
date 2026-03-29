@@ -34,28 +34,30 @@ pub struct MLTradingStrategy {
     pub feature_config: FeatureConfig,
     pub prediction_threshold: u32, // Min prediction confidence to trade
     pub position_size_pct: u32,
-    pub active_position: Option<MLPosition>,
+    /// `position_id == 0` means no active position (avoids `Option` in contract types for SDK testutils).
+    pub active_position: MLPosition,
     pub model_version: u32,
     pub last_model_update: u64,
+}
+
+#[allow(dead_code)]
+fn ml_position_absent() -> MLPosition {
+    MLPosition {
+        position_id: 0,
+        predicted_direction: TradeDirection::Buy,
+        prediction_confidence: 0,
+        entry_price: 0,
+        amount: 0,
+    }
 }
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MLModel {
-    LogisticRegression {
-        weights: Vec<i128>,
-        intercept: i128,
-    },
-    DecisionTree {
-        nodes: Vec<TreeNode>,
-    },
-    RandomForest {
-        trees: Vec<DecisionTree>,
-        tree_weights: Vec<u32>,
-    },
-    NeuralNetwork {
-        layers: Vec<Layer>,
-    },
+    LogisticRegression(Vec<i128>, i128),
+    DecisionTree(Vec<TreeNode>),
+    RandomForest(Vec<DecisionTree>, Vec<u32>),
+    NeuralNetwork(Vec<Layer>),
 }
 
 #[contracttype]
@@ -113,9 +115,9 @@ pub enum FeatureType {
     RSI,
     MACD,
     BollingerBands,
-    PriceChange { periods: u32 },
-    VolumeChange { periods: u32 },
-    Custom { name: String, calculation: String },
+    PriceChange(u32),
+    VolumeChange(u32),
+    Custom(String, String),
 }
 
 #[contracttype]
@@ -183,7 +185,7 @@ pub fn extract_features(
     for i in 0..feature_config.features.len() {
         let feature_type = feature_config.features.get(i).unwrap();
 
-        let value = match feature_type {
+        let value = match &feature_type {
             FeatureType::Price => get_current_price(asset_pair.clone())?,
             FeatureType::Volume => get_24h_volume(asset_pair.clone())?,
             FeatureType::RSI => calculate_rsi(asset_pair.clone(), 14)? as i128,
@@ -199,24 +201,24 @@ pub fn extract_features(
                 let current_price = get_current_price(asset_pair.clone())?;
                 ((current_price - lower) * PRECISION) / (upper - lower)
             }
-            FeatureType::PriceChange { periods } => {
+            FeatureType::PriceChange(periods) => {
                 let current = get_current_price(asset_pair.clone())?;
-                let past = get_price_n_periods_ago(asset_pair.clone(), periods)?;
+                let past = get_price_n_periods_ago(asset_pair.clone(), *periods)?;
                 if past == 0 {
                     return Err(AutoTradeError::InvalidPriceData);
                 }
                 ((current - past) * PRECISION) / past
             }
-            FeatureType::VolumeChange { periods } => {
+            FeatureType::VolumeChange(periods) => {
                 let current = get_current_volume(asset_pair.clone())?;
-                let past = get_volume_n_periods_ago(asset_pair.clone(), periods)?;
+                let past = get_volume_n_periods_ago(asset_pair.clone(), *periods)?;
                 if past == 0 {
                     return Err(AutoTradeError::InvalidPriceData);
                 }
                 ((current - past) * PRECISION) / past
             }
-            FeatureType::Custom { name, calculation } => {
-                calculate_custom_feature(asset_pair.clone(), name, calculation)?
+            FeatureType::Custom(name, calculation) => {
+                calculate_custom_feature(asset_pair.clone(), name.clone(), calculation.clone())?
             }
         };
 
@@ -254,9 +256,9 @@ fn feature_type_name(env: &Env, feature_type: &FeatureType) -> String {
         FeatureType::RSI => String::from_str(env, "rsi"),
         FeatureType::MACD => String::from_str(env, "macd"),
         FeatureType::BollingerBands => String::from_str(env, "bollinger_bands"),
-        FeatureType::PriceChange { .. } => String::from_str(env, "price_change"),
-        FeatureType::VolumeChange { .. } => String::from_str(env, "volume_change"),
-        FeatureType::Custom { name, .. } => name.clone(),
+        FeatureType::PriceChange(_) => String::from_str(env, "price_change"),
+        FeatureType::VolumeChange(_) => String::from_str(env, "volume_change"),
+        FeatureType::Custom(name, _) => name.clone(),
     }
 }
 
@@ -266,14 +268,14 @@ pub fn predict_with_model(
     features: &Vec<i128>,
 ) -> Result<MLPrediction, AutoTradeError> {
     match model {
-        MLModel::LogisticRegression { weights, intercept } => {
+        MLModel::LogisticRegression(weights, intercept) => {
             predict_logistic_regression(features, weights, *intercept)
         }
-        MLModel::DecisionTree { nodes } => predict_decision_tree(features, nodes),
-        MLModel::RandomForest { trees, tree_weights } => {
+        MLModel::DecisionTree(nodes) => predict_decision_tree(features, nodes),
+        MLModel::RandomForest(trees, tree_weights) => {
             predict_random_forest(features, trees, tree_weights)
         }
-        MLModel::NeuralNetwork { layers } => predict_neural_network(features, layers),
+        MLModel::NeuralNetwork(layers) => predict_neural_network(features, layers),
     }
 }
 
@@ -499,7 +501,7 @@ fn tanh_approx(x: i128) -> i128 {
 pub fn check_ml_signal(env: &Env, strategy_id: u64) -> Result<Option<MLSignal>, AutoTradeError> {
     let strategy = get_ml_trading_strategy(env, strategy_id)?;
 
-    if strategy.active_position.is_some() {
+    if strategy.active_position.position_id != 0 {
         return Ok(None);
     }
 
@@ -532,13 +534,13 @@ pub fn execute_ml_trade(
     let position_id = get_next_position_id(env);
     let current_price = get_current_price(strategy.asset_pair.clone())?;
 
-    strategy.active_position = Some(MLPosition {
+    strategy.active_position = MLPosition {
         position_id,
         predicted_direction: signal.direction,
         prediction_confidence: signal.confidence,
         entry_price: current_price,
         amount: confidence_scaled,
-    });
+    };
 
     set_ml_trading_strategy(env, strategy_id, &strategy);
 
@@ -569,7 +571,7 @@ pub fn update_ml_model(
 
 fn validate_model_structure(model: &MLModel) -> Result<(), AutoTradeError> {
     match model {
-        MLModel::LogisticRegression { weights, intercept } => {
+        MLModel::LogisticRegression(weights, intercept) => {
             if weights.len() == 0 || weights.len() > MAX_LOGISTIC_WEIGHTS {
                 return Err(AutoTradeError::InvalidPriceData);
             }
@@ -577,13 +579,13 @@ fn validate_model_structure(model: &MLModel) -> Result<(), AutoTradeError> {
                 return Err(AutoTradeError::InvalidPriceData);
             }
         }
-        MLModel::DecisionTree { nodes } => {
+        MLModel::DecisionTree(nodes) => {
             if nodes.len() == 0 || nodes.len() > MAX_TREE_NODES {
                 return Err(AutoTradeError::InvalidPriceData);
             }
             validate_tree_structure(nodes)?;
         }
-        MLModel::RandomForest { trees, tree_weights } => {
+        MLModel::RandomForest(trees, tree_weights) => {
             if trees.len() == 0 || trees.len() != tree_weights.len() || trees.len() > MAX_FOREST_TREES {
                 return Err(AutoTradeError::InvalidPriceData);
             }
@@ -592,7 +594,7 @@ fn validate_model_structure(model: &MLModel) -> Result<(), AutoTradeError> {
                 validate_tree_structure(&tree.nodes)?;
             }
         }
-        MLModel::NeuralNetwork { layers } => {
+        MLModel::NeuralNetwork(layers) => {
             if layers.len() == 0 || layers.len() > MAX_NN_LAYERS {
                 return Err(AutoTradeError::InvalidPriceData);
             }
@@ -843,10 +845,7 @@ mod tests {
     fn logistic_regression_matches_expected_direction() {
         let env = Env::default();
 
-        let model = MLModel::LogisticRegression {
-            weights: vec![&env, 4000, -2000, 3000],
-            intercept: 500,
-        };
+        let model = MLModel::LogisticRegression(vec![&env, 4000, -2000, 3000], 500);
 
         let features = vec![&env, 6000, 2000, 3000];
         let prediction = predict_with_model(&model, &features).unwrap();
@@ -885,7 +884,7 @@ mod tests {
             }
         ];
 
-        let model = MLModel::DecisionTree { nodes };
+        let model = MLModel::DecisionTree(nodes);
 
         let buy_features = vec![&env, 4000];
         let buy_pred = predict_with_model(&model, &buy_features).unwrap();
@@ -928,10 +927,10 @@ mod tests {
             ],
         };
 
-        let model = MLModel::RandomForest {
-            trees: vec![&env, tree_buy, tree_sell],
-            tree_weights: vec![&env, 3, 1],
-        };
+        let model = MLModel::RandomForest(
+            vec![&env, tree_buy, tree_sell],
+            vec![&env, 3, 1],
+        );
 
         let features = vec![&env, 1000];
         let prediction = predict_with_model(&model, &features).unwrap();

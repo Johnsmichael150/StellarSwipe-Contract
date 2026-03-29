@@ -14,7 +14,7 @@ pub enum DCAFrequency {
     Weekly,
     Biweekly,
     Monthly,
-    Custom { interval_seconds: u64 },
+    Custom(u64),
 }
 
 #[contracttype]
@@ -128,7 +128,7 @@ fn interval_secs(freq: &DCAFrequency) -> u64 {
         DCAFrequency::Weekly => 604_800,
         DCAFrequency::Biweekly => 1_209_600,
         DCAFrequency::Monthly => 2_592_000,
-        DCAFrequency::Custom { interval_seconds } => *interval_seconds,
+        DCAFrequency::Custom(interval_seconds) => *interval_seconds,
     }
 }
 
