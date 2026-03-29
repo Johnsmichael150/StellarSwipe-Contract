@@ -30,6 +30,8 @@ pub enum AutoTradeError {
     NoActivePortfolio = 15,
     NoTradeSignal = 16,
     InvalidStatArbConfig = 17,
+    ExitStrategyNotFound = 18,
+    InvalidExitConfig = 19,
  main
  main
 }
