@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Address, Env, Symbol, symbol_short, token};
 
 use stellar_swipe_common::assets::Asset;
 
@@ -19,6 +19,12 @@ pub enum FeeCollectorError {
 pub struct FeeConfig {
     pub max_fee_per_trade: i128, // 100 XLM equivalent
     pub min_fee_per_trade: i128, // 0.01 XLM equivalent
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum StorageKey {
+    ProviderPendingFees(Address, Address),
 }
 
 #[contracttype]
@@ -95,5 +101,30 @@ impl FeeCollectorContract {
         }
 
         Ok(clamped_fee)
+    }
+
+    /// Claim pending fees for a provider and token
+    pub fn claim_fees(env: Env, provider: Address, token: Address) -> i128 {
+        provider.require_auth();
+
+        let key = StorageKey::ProviderPendingFees(provider.clone(), token.clone());
+        let amount: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+
+        if amount > 0 {
+            // Transfer tokens from contract to provider
+            let token_client = token::Client::new(&env, &token);
+            token_client.transfer(&env.current_contract_address(), &provider, &amount);
+
+            // Reset pending balance to 0
+            env.storage().persistent().set(&key, &0);
+        }
+
+        // Emit FeesClaimed event
+        env.events().publish(
+            (symbol_short!("fees"), symbol_short!("claimed")),
+            (provider, amount, token),
+        );
+
+        amount
     }
 }
