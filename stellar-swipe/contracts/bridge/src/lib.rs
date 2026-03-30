@@ -1,15 +1,13 @@
 #![no_std]
 
-feat/cross-chain-bridge-91
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Env, String, Symbol, Vec,
 };
+use stellar_swipe_common::SECONDS_PER_DAY;
 
 mod validators;
 
 pub use validators::{ValidatorApproval, ValidatorApprovalKind, ValidatorSet};
-
-const DAY_SECONDS: u64 = 86_400;
 
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

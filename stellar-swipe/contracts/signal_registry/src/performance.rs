@@ -1,10 +1,10 @@
 use crate::types::{ProviderPerformance, Signal, SignalAction, SignalStatus, TradeExecution};
+use stellar_swipe_common::BASIS_POINTS_DENOMINATOR_I128;
 
 /// ROI calculation constants
-const BASIS_POINTS_100_PERCENT: i128 = 10000;
 const SUCCESS_THRESHOLD_BPS: i128 = 200; // 2% in basis points
 const FAILURE_THRESHOLD_BPS: i128 = -500; // -5% in basis points
-const MIN_ROI_BPS: i128 = -10000; // -100% cap
+const MIN_ROI_BPS: i128 = -BASIS_POINTS_DENOMINATOR_I128; // -100% cap
 
 /// Calculate ROI in basis points from entry and exit prices
 ///
@@ -31,7 +31,7 @@ pub fn calculate_roi(entry_price: i128, exit_price: i128, action: &SignalAction)
 
     // Calculate ROI: (price_diff / entry_price) * 10000
     let roi = price_diff
-        .checked_mul(BASIS_POINTS_100_PERCENT)
+        .checked_mul(BASIS_POINTS_DENOMINATOR_I128)
         .expect("ROI calculation overflow")
         .checked_div(entry_price)
         .expect("division by zero in ROI calculation");
@@ -184,7 +184,7 @@ pub fn update_provider_performance(
     // Recalculate success rate: (successful_signals / total_signals) * 10000
     if provider_stats.total_signals > 0 {
         provider_stats.success_rate = ((provider_stats.successful_signals as i128)
-            * BASIS_POINTS_100_PERCENT
+            * BASIS_POINTS_DENOMINATOR_I128
             / (provider_stats.total_signals as i128)) as u32;
     }
 

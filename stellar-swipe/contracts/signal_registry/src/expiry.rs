@@ -1,11 +1,12 @@
 use soroban_sdk::{Address, Env, Map, Vec};
+use stellar_swipe_common::{SECONDS_PER_30_DAY_MONTH, SECONDS_PER_DAY};
 
 use crate::events::emit_signal_expired;
 use crate::types::{Signal, SignalStatus};
 
-pub const DEFAULT_EXPIRY_SECONDS: u64 = 24 * 60 * 60; // 24 hours
+pub const DEFAULT_EXPIRY_SECONDS: u64 = SECONDS_PER_DAY; // 24 hours
 pub const MAX_CLEANUP_BATCH_SIZE: u32 = 100; // Process max 100 signals per cleanup call
-pub const ARCHIVE_THRESHOLD_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
+pub const ARCHIVE_THRESHOLD_SECONDS: u64 = SECONDS_PER_30_DAY_MONTH; // 30 days
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CleanupResult {

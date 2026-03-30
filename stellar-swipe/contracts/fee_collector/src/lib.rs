@@ -15,6 +15,7 @@ pub use storage::{
 };
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env};
+use stellar_swipe_common::SECONDS_PER_DAY;
 
 #[cfg(test)]
 mod test;
@@ -72,7 +73,7 @@ impl FeeCollector {
             recipient: recipient.clone(),
             token: token.clone(),
             amount,
-            available_at: queued_at + 86400,
+            available_at: queued_at + SECONDS_PER_DAY,
         }
         .publish(&env);
         Ok(())
@@ -91,15 +92,11 @@ impl FeeCollector {
         admin.require_auth();
 
         let queued = match get_queued_withdrawal(&env) {
-            Some(q)
-                if q.recipient == recipient && q.token == token && q.amount == amount =>
-            {
-                q
-            }
+            Some(q) if q.recipient == recipient && q.token == token && q.amount == amount => q,
             _ => return Err(ContractError::WithdrawalNotQueued),
         };
 
-        if env.ledger().timestamp() < queued.queued_at + 86400 {
+        if env.ledger().timestamp() < queued.queued_at + SECONDS_PER_DAY {
             return Err(ContractError::TimelockNotElapsed);
         }
 
